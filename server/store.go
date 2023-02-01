@@ -31,6 +31,8 @@ const (
 	FileStorage = StorageType(22)
 	// MemoryStorage specifies in memory only.
 	MemoryStorage = StorageType(33)
+	// Experimental, not yet supported. Using SQLite.
+	SQLiteStorage = StorageType(55)
 	// Any is for internals.
 	AnyStorage = StorageType(44)
 )
@@ -80,33 +82,87 @@ type StoreMsg struct {
 type StorageUpdateHandler func(msgs, bytes int64, seq uint64, subj string)
 
 type StreamStore interface {
-	StoreMsg(subject string, hdr, msg []byte) (uint64, int64, error)
-	StoreRawMsg(subject string, hdr, msg []byte, seq uint64, ts int64) error
+	// Store stores a message.
+	StoreMsg(subject string, hdr, msg []byte) (seq uint64, tsNano int64, err error)
+
+	// StoreRawMsg stores a raw message with expected sequence number and timestamp.
+	StoreRawMsg(subject string, hdr, msg []byte, seq uint64, tsNano int64) error
+
+	// SkipMsg will use the next sequence number but not store anything.
 	SkipMsg() uint64
+
+	// LoadMsg will lookup the message by sequence number and return it if found.
 	LoadMsg(seq uint64, sm *StoreMsg) (*StoreMsg, error)
+
+	// LoadNextMsg will find the next message matching the filter subject starting at the start sequence.
+	// The filter subject can be a wildcard.
 	LoadNextMsg(filter string, wc bool, start uint64, smp *StoreMsg) (sm *StoreMsg, skip uint64, err error)
+
+	// LoadLastMsg will return the last message we have that matches a given subject.
+	// The subject can be a wildcard.
 	LoadLastMsg(subject string, sm *StoreMsg) (*StoreMsg, error)
+
+	// RemoveMsg will remove the message from this store.
+	// Will return the number of bytes removed.
 	RemoveMsg(seq uint64) (bool, error)
+
+	// EraseMsg will remove the message and rewrite its contents.
 	EraseMsg(seq uint64) (bool, error)
+
+	// Purge will remove all messages from this store.
+	// Will return the number of purged messages.
 	Purge() (uint64, error)
+
+	// PurgeEx will remove messages based on subject filters, sequence and number of messages to keep.
+	// Will return the number of purged messages.
 	PurgeEx(subject string, seq, keep uint64) (uint64, error)
+
+	// Compact will remove all messages from this store up to
+	// but not including the seq parameter.
+	// Will return the number of purged messages.
 	Compact(seq uint64) (uint64, error)
+
+	// Truncate will truncate a stream store up to and including seq. Sequence needs to be valid.
 	Truncate(seq uint64) error
+
+	// GetSeqFromTime looks for the first sequence number that has the message with >= timestamp.
 	GetSeqFromTime(t time.Time) uint64
+
+	// FilteredState will return the SimpleState associated with the filtered subject and a proposed starting sequence.
 	FilteredState(seq uint64, subject string) SimpleState
+
+	// SubjectsState returns a map of SimpleState for all matching subjects.
 	SubjectsState(filterSubject string) map[string]SimpleState
+
+	// State retrieves the state from the state file.
+	// This is not expected to be called in high performance code, only on startup.
 	State() StreamState
+
+	// FastState will fill in state with only the following.
+	// Msgs, Bytes, First and Last Sequence and Time and NumDeleted.
 	FastState(*StreamState)
+
+	// Type returns the type of the underlying store.
 	Type() StorageType
+
+	// RegisterStorageUpdates registers a callback for updates to storage changes.
+	// It will present number of messages and bytes as a signed integer and an
+	// optional sequence number of the message if a single.
 	RegisterStorageUpdates(StorageUpdateHandler)
+
 	UpdateConfig(cfg *StreamConfig) error
 	Delete() error
 	Stop() error
 	ConsumerStore(name string, cfg *ConsumerConfig) (ConsumerStore, error)
 	AddConsumer(o ConsumerStore) error
 	RemoveConsumer(o ConsumerStore) error
+
+	// Stream our snapshot compression and tar.
 	Snapshot(deadline time.Duration, includeConsumers, checkMsgs bool) (*SnapshotResult, error)
+
 	Utilization() (total, reported uint64, err error)
+
+	//StreamStoreMsgSize(subj string, hdr, msg, []byte) TODODelaney add this to the interface
 }
 
 // RetentionPolicy determines how messages in a set are retained.
